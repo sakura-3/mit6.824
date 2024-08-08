@@ -57,14 +57,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Success = true
 
-	// 已有的某条日志与request中的日志冲突
-	if len(args.Entries) != 0 && args.PrevLogIndex+1 < len(rf.log) && rf.log[args.PrevLogIndex+1].Term != args.Entries[0].Term {
-		// Debug(dLog2, "S%d's log conflict at index_%d,[%d!=%d]", rf.me, args.PrevLogIndex+1, rf.log[args.PrevLogIndex+1].Term, args.Entries[0].Term)
-		Debug(dLog2, "S%d's log conflict at index_%d,S%d's log=%v,args=%v", rf.me, args.PrevLogIndex+1, rf.me, rf.log, args)
-		rf.log = rf.log[:args.PrevLogIndex+1]
+	for p, log := range args.Entries {
+		q := args.PrevLogIndex + 1 + p
+		if q < len(rf.log) && rf.log[q].Term != log.Term {
+			Debug(dLog2, "S%d's log conflict at index_%d,[%d!=%d]", rf.me, q, rf.log[q].Term, args.Entries[p].Term)
+			rf.log = rf.log[:q]
+			rf.log = append(rf.log, args.Entries[p:]...)
+			break
+		} else if q == len(rf.log) {
+			rf.log = append(rf.log, args.Entries[p:]...)
+			break
+		}
 	}
-
-	rf.log = append(rf.log, args.Entries...)
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
