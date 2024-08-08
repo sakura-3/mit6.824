@@ -44,3 +44,29 @@ func (rf *Raft) appendTicker() {
 		}
 	}
 }
+
+func (rf *Raft) commitTicker() {
+	ticker := time.NewTicker(time.Duration(CommitInteval) * time.Millisecond)
+	defer ticker.Stop()
+
+	for !rf.killed() {
+		<-ticker.C
+
+		rf.mu.Lock()
+		savedApply := rf.lastApplied
+		for rf.lastApplied < rf.commitIndex {
+			rf.lastApplied++
+			msg := ApplyMsg{
+				CommandValid: true,
+				Command:      rf.log[rf.lastApplied].Cmd,
+				CommandIndex: rf.lastApplied,
+			}
+			rf.applyCh <- msg
+		}
+
+		if savedApply != rf.lastApplied {
+			Debug(dCommit, "S%d commit log[%d:%d]=%v", rf.me, savedApply+1, rf.commitIndex+1, rf.log[savedApply+1:rf.commitIndex+1])
+		}
+		rf.mu.Unlock()
+	}
+}

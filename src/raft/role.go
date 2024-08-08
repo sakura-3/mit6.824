@@ -12,8 +12,9 @@ const (
 
 const (
 	HeartbeatInteval  int64 = 35
-	MinElectInteval   int64 = 75
+	MinElectInteval   int64 = 150
 	ExtraElectInteval int64 = 100
+	CommitInteval     int64 = 35
 )
 
 // becomeRole expected rf.mu locked
@@ -22,9 +23,11 @@ func (rf *Raft) becomeLeader(term int) {
 	Debug(dInfo, "S%d become leader at T%d.", rf.me, rf.currentTerm)
 
 	rf.role = Leader
-	rf.mu.Unlock()
+	for i := range rf.peers {
+		rf.matchIndex[i] = len(rf.log)
+		rf.matchIndex[i] = 0
+	}
 	go rf.leaderAppendEntries()
-	rf.mu.Lock()
 }
 
 func (rf *Raft) becomeFollower(term int) {

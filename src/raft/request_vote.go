@@ -47,8 +47,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.becomeFollower(args.Term)
 	}
 
+	n := len(rf.log)
+	upToDate := args.LastLogTerm > rf.log[n-1].Term || (args.LastLogTerm == rf.log[n-1].Term && args.LastLogIndex >= n-1)
+
 	if args.Term == rf.currentTerm &&
-		(rf.votedFor == -1 || rf.votedFor == args.Candidate) {
+		(rf.votedFor == -1 || rf.votedFor == args.Candidate) && upToDate {
 		Debug(dVote, "S%d vote for S%d at T%d.", rf.me, args.Candidate, rf.currentTerm)
 
 		Debug(dTimer, "S%d,reset vote timer.", rf.me)
@@ -56,6 +59,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.Candidate
 
 		reply.VoteGranted = true
+	} else if !upToDate {
+		Debug(dVote, "S%d,vote request with older log from S%d,reject", rf.me, args.Candidate)
+		reply.VoteGranted = false
 	} else {
 		Debug(dVote, "S%d already vote for %d at T%d.", rf.me, rf.votedFor, rf.currentTerm)
 		reply.VoteGranted = false
@@ -76,8 +82,10 @@ func (rf *Raft) elect(term int) {
 		go func(to int) {
 			rf.mu.Lock()
 			args := RequestVoteArgs{
-				Term:      term,
-				Candidate: rf.me,
+				Term:         term,
+				Candidate:    rf.me,
+				LastLogIndex: len(rf.log) - 1,
+				LastLogTerm:  rf.log[len(rf.log)-1].Term,
 			}
 			rf.mu.Unlock()
 

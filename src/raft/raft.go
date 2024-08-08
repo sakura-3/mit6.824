@@ -82,6 +82,7 @@ type Raft struct {
 	// 其它
 	role     Role
 	voteTime time.Time
+	applyCh  chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -193,6 +194,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (3B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.role != Leader {
+		return -1, -1, false
+	}
+
+	e := LogEntry{rf.currentTerm, command}
+	rf.log = append(rf.log, e)
+	index = len(rf.log) - 1
+	term = rf.currentTerm
+	isLeader = true
 
 	return index, term, isLeader
 }
@@ -235,6 +247,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (3A, 3B, 3C).
 	rf.becomeFollower(0)
+	rf.log = make([]LogEntry, 0)
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+
+	// 1_index
+	rf.log = append(rf.log, LogEntry{Term: 0})
+	rf.applyCh = applyCh
+
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = 1
+	}
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -242,6 +265,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// start ticker goroutine to start elections
 	go rf.electTicker()
 	go rf.appendTicker()
+	go rf.commitTicker()
 
 	return rf
 }
