@@ -37,6 +37,8 @@ func (rf *Raft) becomeFollower(term int) {
 	rf.role = Follwer
 	rf.votedFor = -1
 	rf.voteTime = time.Now()
+
+	rf.persist()
 }
 
 func (rf *Raft) becomeCandidate(term int) {
@@ -46,4 +48,6 @@ func (rf *Raft) becomeCandidate(term int) {
 	rf.role = Candidate
 	rf.votedFor = rf.me
 	rf.voteTime = time.Now()
+
+	rf.persist()
 }

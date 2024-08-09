@@ -58,6 +58,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteTime = time.Now()
 		rf.votedFor = args.Candidate
 
+		rf.persist()
+
 		reply.VoteGranted = true
 	} else if !upToDate {
 		Debug(dVote, "S%d,vote request with older log from S%d,reject", rf.me, args.Candidate)
