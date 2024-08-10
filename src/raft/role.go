@@ -12,8 +12,8 @@ const (
 
 const (
 	HeartbeatInteval  int64 = 35
-	MinElectInteval   int64 = 150
-	ExtraElectInteval int64 = 100
+	MinElectInteval   int64 = 100
+	ExtraElectInteval int64 = 75
 	CommitInteval     int64 = 35
 )
 

@@ -14,6 +14,11 @@ type (
 	AppendEntriesReply struct {
 		Term    int
 		Success bool
+
+		// For backup optimization
+		XTerm  int
+		XIndex int
+		XLen   int
 	}
 )
 
@@ -34,6 +39,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.Term < rf.currentTerm {
 		reply.Success = false
+		Debug(dLog, "S%d,receive append entries request with lower term(%d<%d),ignore.", rf.me, args.Term, rf.currentTerm)
 		rf.mu.Unlock()
 		return
 	}
@@ -44,13 +50,36 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteTime = time.Now()
 	}
 
-	if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	// if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	// 	reply.Success = false
+	// 	t := -1
+	// 	if args.PrevLogIndex < len(rf.log) {
+	// 		t = rf.log[args.PrevLogIndex].Term
+	// 	}
+	// 	Debug(dLog2, "S%d receive invalid prevLog[index=%d,term=%d],rf.log[len=%d,term=%d]", rf.me, args.PrevLogIndex, args.PrevLogTerm, len(rf.log), t)
+	// 	rf.mu.Unlock()
+	// 	return
+	// }
+
+	if args.PrevLogIndex >= len(rf.log) {
+		reply.XTerm = -1
+		reply.XLen = len(rf.log)
 		reply.Success = false
-		t := -1
-		if args.PrevLogIndex < len(rf.log) {
-			t = rf.log[args.PrevLogIndex].Term
+
+		Debug(dLog2, "S%d:invalid prevlog,no entry exists at %d.", rf.me, args.PrevLogIndex)
+		rf.mu.Unlock()
+		return
+	} else if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.XTerm = rf.log[args.PrevLogIndex].Term
+		t := args.PrevLogIndex - 1
+		for t > 0 && rf.log[t].Term == rf.log[args.PrevLogIndex].Term {
+			t--
 		}
-		Debug(dLog2, "S%d receive invalid prevLog[index=%d,term=%d],rf.log[len=%d,term=%d]", rf.me, args.PrevLogIndex, args.PrevLogTerm, len(rf.log), t)
+		reply.XIndex = t + 1
+		reply.Success = false
+
+		Debug(dLog2, "S%d:invalid prevlog,conflict at %d.", rf.me, args.PrevLogIndex)
+		Debug(dTrace, "S%d's log=%v,args=%v", rf.me, rf.log, args)
 		rf.mu.Unlock()
 		return
 	}
@@ -117,7 +146,8 @@ func (rf *Raft) leaderAppendEntries() {
 			if ok := rf.peers[to].Call("Raft.AppendEntries", &args, &reply); ok {
 				rf.mu.Lock()
 				Debug(dLog, "S%d <- S%d,Receive append entries reply at T%d.", rf.me, to, rf.currentTerm)
-				if rf.role != Leader {
+
+				if rf.role != Leader || rf.currentTerm != savedTerm {
 					rf.mu.Unlock()
 					return
 				}
@@ -148,9 +178,38 @@ func (rf *Raft) leaderAppendEntries() {
 							break
 						}
 					}
+					rf.mu.Unlock()
+					return
+				}
+
+				// !reply.Success,prevLog 不匹配
+				Debug(dLog2, "S%d,log conflict at %d.", rf.me, args.PrevLogIndex)
+
+				if reply.XTerm == -1 {
+					Debug(dTrace, "S%d,follwer has no entries at %d,next[%d] back to %d.", rf.me, args.PrevLogIndex, to, reply.XLen)
+					rf.nextIndex[to] = reply.XLen
+					rf.mu.Unlock()
+					return
+				}
+
+				// to已经被kill了，忽略可能导致next置0，并在下次append entry时导致越界(args.PrevLogIndex=-1)
+				if reply.XTerm == 0 {
+					rf.mu.Unlock()
+					return
+				}
+
+				t := rf.nextIndex[to] - 1
+				for t > 0 && rf.log[t].Term > reply.XTerm {
+					t--
+				}
+
+				if rf.log[t].Term == reply.XTerm {
+					Debug(dTrace, "S%d find entry with Xterm=%d at %d,next[%d] back to %d.", rf.me, reply.XTerm, t, to, t)
+					Debug(dTrace, "S%d's log=%v,args=%+v,reply=%+v", rf.me, rf.log, args, reply)
+					rf.nextIndex[to] = t
 				} else {
-					// prevLog 不匹配
-					rf.nextIndex[to]--
+					Debug(dTrace, "S%d has no entry with Xterm=%d,next[%d] back to %d.", rf.me, reply.XTerm, to, reply.XIndex)
+					rf.nextIndex[to] = reply.XIndex
 				}
 
 				rf.mu.Unlock()
