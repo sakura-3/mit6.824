@@ -10,7 +10,7 @@ func (rf *Raft) electTimeout() time.Duration {
 }
 
 func (rf *Raft) electTicker() {
-	ticker := time.NewTicker(35 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
 	for !rf.killed() {

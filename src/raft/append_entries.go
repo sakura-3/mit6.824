@@ -50,17 +50,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteTime = time.Now()
 	}
 
-	// if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-	// 	reply.Success = false
-	// 	t := -1
-	// 	if args.PrevLogIndex < len(rf.log) {
-	// 		t = rf.log[args.PrevLogIndex].Term
-	// 	}
-	// 	Debug(dLog2, "S%d receive invalid prevLog[index=%d,term=%d],rf.log[len=%d,term=%d]", rf.me, args.PrevLogIndex, args.PrevLogTerm, len(rf.log), t)
-	// 	rf.mu.Unlock()
-	// 	return
-	// }
-
 	if args.PrevLogIndex >= len(rf.log) {
 		reply.XTerm = -1
 		reply.XLen = len(rf.log)
@@ -188,12 +177,6 @@ func (rf *Raft) leaderAppendEntries() {
 				if reply.XTerm == -1 {
 					Debug(dTrace, "S%d,follwer has no entries at %d,next[%d] back to %d.", rf.me, args.PrevLogIndex, to, reply.XLen)
 					rf.nextIndex[to] = reply.XLen
-					rf.mu.Unlock()
-					return
-				}
-
-				// to已经被kill了，忽略可能导致next置0，并在下次append entry时导致越界(args.PrevLogIndex=-1)
-				if reply.XTerm == 0 {
 					rf.mu.Unlock()
 					return
 				}

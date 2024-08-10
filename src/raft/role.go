@@ -11,10 +11,10 @@ const (
 )
 
 const (
-	HeartbeatInteval  int64 = 35
-	MinElectInteval   int64 = 100
-	ExtraElectInteval int64 = 75
-	CommitInteval     int64 = 35
+	HeartbeatInteval  int64 = 100
+	MinElectInteval   int64 = 300
+	ExtraElectInteval int64 = 300
+	CommitInteval     int64 = 50
 )
 
 // becomeRole expected rf.mu locked
@@ -24,7 +24,7 @@ func (rf *Raft) becomeLeader(term int) {
 
 	rf.role = Leader
 	for i := range rf.peers {
-		rf.matchIndex[i] = len(rf.log)
+		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
 	go rf.leaderAppendEntries()
