@@ -85,6 +85,11 @@ type Raft struct {
 	role     Role
 	voteTime time.Time
 	applyCh  chan ApplyMsg
+	snapShot []byte
+
+	// 需要持久化
+	LastIncludedIndex int
+	LastIncludedTerm  int
 }
 
 // return currentTerm and whether this server
@@ -114,7 +119,10 @@ func (rf *Raft) persist() {
 	e.Encode(rf.votedFor)
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.log)
-	rf.persister.Save(w.Bytes(), nil)
+
+	e.Encode(rf.LastIncludedIndex)
+	e.Encode(rf.LastIncludedTerm)
+	rf.persister.Save(w.Bytes(), rf.snapShot)
 }
 
 // restore previously persisted state.
@@ -126,16 +134,33 @@ func (rf *Raft) readPersist(data []byte) {
 
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	var votedFor, currentTerm int
+	var votedFor, currentTerm, lastIncludeIdx, lastIncludedTerm int
 	var log []LogEntry
 
-	if d.Decode(&votedFor) != nil || d.Decode(&currentTerm) != nil || d.Decode(&log) != nil {
+	if d.Decode(&votedFor) != nil ||
+		d.Decode(&currentTerm) != nil ||
+		d.Decode(&log) != nil ||
+		d.Decode(&lastIncludeIdx) != nil ||
+		d.Decode(&lastIncludedTerm) != nil {
 		Debug(dPersist, "S%d,readPersist failed.", rf.me)
 	} else {
 		rf.votedFor = votedFor
 		rf.currentTerm = currentTerm
 		rf.log = log
+
+		rf.LastIncludedIndex = lastIncludeIdx
+		rf.LastIncludedTerm = lastIncludedTerm
+
+		rf.lastApplied = max(rf.lastApplied, lastIncludeIdx)
+		rf.commitIndex = max(rf.commitIndex, lastIncludeIdx)
 	}
+}
+
+func (rf *Raft) readSnapshot(data []byte) {
+	if data == nil || len(data) < 1 {
+		return
+	}
+	rf.snapShot = data
 }
 
 // the service says it has created a snapshot that has
@@ -144,38 +169,26 @@ func (rf *Raft) readPersist(data []byte) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
-}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
+	if rf.commitIndex < index || index <= rf.LastIncludedIndex {
+		Debug(dSnap, "S%d reject snapshot before %d,commitIdx=%d,lastIncludeIdx=%d.", rf.me, index, rf.commitIndex, rf.LastIncludedIndex)
+		return
+	}
+
+	Debug(dSnap, "S%d accept snapshot before %d.", rf.me, index)
+	rf.snapShot = snapshot
+	rf.LastIncludedTerm = rf.log[rf.realIndex(rf.LastIncludedIndex)].Term
+
+	// 有效log仍然从1开始
+	rf.log = rf.log[rf.realIndex(rf.LastIncludedIndex):]
+	rf.LastIncludedIndex = index
+
+	rf.commitIndex = max(rf.commitIndex, index)
+	rf.lastApplied = max(rf.lastApplied, index)
+
+	rf.persist()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -262,13 +275,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.log = append(rf.log, LogEntry{Term: 0})
 	rf.applyCh = applyCh
 
-	for i := range rf.nextIndex {
-		rf.nextIndex[i] = 1
-	}
-
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.readSnapshot(persister.ReadSnapshot())
 
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = rf.virtualIndex(len(rf.log))
+	}
 	// start ticker goroutine to start elections
 	go rf.electTicker()
 	go rf.appendTicker()
