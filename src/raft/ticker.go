@@ -54,19 +54,22 @@ func (rf *Raft) commitTicker() {
 
 		rf.mu.Lock()
 		savedApply := rf.lastApplied
-		for rf.lastApplied < rf.commitIndex {
-			rf.lastApplied++
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command:      rf.log[rf.lastApplied].Cmd,
-				CommandIndex: rf.lastApplied,
-			}
-			rf.applyCh <- msg
+		savedCommit := rf.commitIndex
+		var buf []LogEntry
+		if savedApply < rf.commitIndex {
+			buf = make([]LogEntry, rf.commitIndex-savedApply)
+			copy(buf, rf.log[savedApply+1:rf.commitIndex+1])
 		}
+		rf.mu.Unlock()
 
-		if savedApply != rf.lastApplied {
-			Debug(dCommit, "S%d commit log[%d:%d]=%v", rf.me, savedApply+1, rf.commitIndex+1, rf.log[savedApply+1:rf.commitIndex+1])
+		// 异步提交
+		for i, e := range buf {
+			rf.applyCh <- ApplyMsg{CommandValid: true, Command: e.Cmd, CommandIndex: i + savedApply + 1}
 		}
+		Debug(dCommit, "S%d commit log[%d:%d]=%v", rf.me, savedApply+1, savedCommit+1, rf.log[savedApply+1:savedCommit+1])
+
+		rf.mu.Lock()
+		rf.lastApplied = max(rf.lastApplied, rf.commitIndex)
 		rf.mu.Unlock()
 	}
 }

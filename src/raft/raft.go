@@ -95,7 +95,7 @@ func (rf *Raft) GetState() (int, bool) {
 	// Your code here (3A).
 	rf.mu.Lock()
 	term = rf.currentTerm
-	isleader = rf.role == Leader
+	isleader = rf.role == Leader && !rf.killed()
 	rf.mu.Unlock()
 	return term, isleader
 }
@@ -198,7 +198,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.role != Leader {
+	if rf.role != Leader || rf.killed() {
 		return -1, -1, false
 	}
 
