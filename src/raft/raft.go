@@ -181,8 +181,12 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.snapShot = snapshot
 	rf.LastIncludedTerm = rf.log[rf.realIndex(rf.LastIncludedIndex)].Term
 
-	// 有效log仍然从1开始
-	rf.log = rf.log[rf.realIndex(rf.LastIncludedIndex):]
+	// 有效log仍然从1开始,直接在原切片上截取无法被gc
+	newLog := make([]LogEntry, 1)
+	newLog[0] = rf.log[rf.realIndex(index)]
+	newLog = append(newLog, rf.log[rf.realIndex(rf.LastIncludedIndex+1):]...)
+	rf.log = newLog
+
 	rf.LastIncludedIndex = index
 
 	rf.commitIndex = max(rf.commitIndex, index)
